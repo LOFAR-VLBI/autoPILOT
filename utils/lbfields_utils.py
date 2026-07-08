@@ -832,3 +832,9 @@ def get_thread_status(futures: dict[str, Future]) -> dict[str, dict[str, int]]:
             ])
         }
     return result
+
+def print_thread_status(statuses: dict[str, int]) -> None:
+    for stack in statuses.keys():
+        print(f"{stack}:")
+        for status in statuses[stack]:
+            print("\t", status, statuses[stack][status])
