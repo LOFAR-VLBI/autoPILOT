@@ -65,6 +65,15 @@ else:
     #default
     maxqueue = 10
     
+THREAD_POOL_SIZES = {
+    "staging" : stagingLimit,
+    "solutions": 1,
+    "download": 1,
+    "unpack": 1,
+    "queue": maxqueue,
+    "verify": 1,
+}
+
 '''
 updated in MySQL_utils.py:
 update_status
@@ -162,7 +171,7 @@ while True:
         check_stage += d['Solutions']
     if 'Staged' in d.keys():
         check_stage += d['Staged']
-    if check_stage  <=  staginglimit:
+    if check_stage  <=  THREAD_POOL_SIZES["stage"]:
         do_stage = True
     else:
         do_stage = False
@@ -226,7 +235,7 @@ while True:
     ## if unpacked, start the processing
     if 'Unpacked' in d:
         for field in fd['Unpacked']:
-            if nq > maxqueue:
+            if nq > THREAD_POOL_SIZES["queue"]:
                 print( 'Queue is full, {:s} waiting for submission'.format(field) )
             else: 
                 nq = nq + 1
