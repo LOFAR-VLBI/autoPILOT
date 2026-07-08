@@ -20,6 +20,7 @@ from tasklist import set_task_list
 from calibrator_utils import get_linc, download_ddfpipeline_solutions, download_field_calibrators, unpack_calibrator_sols, compare_solutions
 import numpy as np
 
+from concurrent.futures import Future
 
 def update_status(name,status,stage_id=None,time=None,workdir=None,av=None,survey=None):
     # adapted from surveys_db
@@ -815,3 +816,19 @@ def archive_lbfield( field, operation='mv' ):
         ## delete the tarfile
         os.system( 'rm {:s}*.tgz'.format(field))
 
+def get_thread_status(futures: dict[str, Future]) -> dict[str, dict[str, int]]:
+    """Get thread information per processing stage.
+
+    The output states per stage how many threads are running or are finished.
+    """
+    result: dict[str, dict[str, int]] = {}
+    for stack in futures.keys():
+        result[stack] = {
+            "running": len([
+                x for x in futures[stack] if x._state.lower() == "running"
+            ]),
+            "finished": len([
+                x for x in futures[stack] if x._state.lower() == "finished"
+            ])
+        }
+    return result
