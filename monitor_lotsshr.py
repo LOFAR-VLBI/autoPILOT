@@ -6,7 +6,6 @@ import datetime
 from surveys_db import SurveysDB, tag_field, get_cluster
 
 import os
-import threading
 import glob
 import requests
 import stager_access
