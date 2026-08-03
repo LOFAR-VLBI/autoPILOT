@@ -209,10 +209,10 @@ def run_task( fieldobsid, task ):
             "ALL",
             fieldobsid,
             None,
-            120e6,
-            168e6,
+            120,
+            168,
         )
-        stager.find_nearest_calibrators(2, 120e6, 168e6)
+        stager.find_nearest_calibrators(2, 120, 168)
         stage_id_calibrators = stager.stage_calibrators()
         calibrator_staged = False
         reference_date = datetime.now()
