@@ -5,7 +5,7 @@
 from time import sleep
 import datetime
 from surveys_db import SurveysDB, tag_field, get_cluster
-from calibrator_utils import check_int_stations
+from autoPILOT.utils.calibrator_utils import check_int_stations
 
 ## need to update this
 #from run_full_field_reprocessing_pipeline import stage_field
