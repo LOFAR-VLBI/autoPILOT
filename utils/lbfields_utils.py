@@ -24,6 +24,59 @@ import numpy as np
 from flocs_lta.lta_search import ObservationStager
 from stager_access import get_surls_requested, get_surls_online
 
+def stage_and_download_calibrators(fieldobsid: str, calibrator_directory: str):
+    """ Stages and downloads the flux density calibrators that bookend the given observation
+    using flocs-lta.
+
+    Args:
+        fieldobsid (str): the SAS ID belonging to the target scan (can be either Observation or AveragingPipeline).
+        calibrator_directory (str): output directory where data products will be downloaded to.
+
+    Raises:
+        TimeoutError: when the attempt takes more than 14 days.
+        RuntimeError: when the flocs-lta call fails (failure in downloading or extracting).
+    """
+    stager = ObservationStager(get_surls=True)
+    stager.find_observation_by_sasid(
+        "ALL",
+        fieldobsid,
+        None,
+        120,
+        168,
+    )
+    stager.find_nearest_calibrators(2, 120, 168)
+    stage_id_calibrators = stager.stage_calibrators()
+    calibrator_staged = False
+    reference_date = datetime.now()
+    while True:
+        if len(get_surls_online(stage_id_calibrators)) == len(
+            get_surls_requested(stage_id_calibrators)
+        ):
+            calibrator_staged = True
+        else:
+            current_date = datetime.datetime.now()
+            time_passed = (current_date - reference_date).days()
+            if time_passed > 14:
+                raise TimeoutError(
+                    f"Failed to fully stage observation after {time_passed} days. Probably best to restage and try again; aborting."
+                )
+            sleep(60)
+        if calibrator_staged:
+            cmd = f"flocs-lta download --outdir {calibrator_directory} {stage_id_calibrators}"
+            with open(
+                f"log_download_calibrators_{fieldobsid}.txt",
+                "w",
+            ) as f_out, open(
+                f"log_download_calibrators_{fieldobsid}_err.txt",
+                "w",
+            ) as f_err:
+                proc = subprocess.run(
+                    cmd, shell=True, text=True, stdout=f_out, stderr=f_err
+                )
+                if not proc.returncode:
+                    break
+                else:
+                    raise RuntimeError("Something went wrong downloading")
 
 def update_status(name,status,stage_id=None,time=None,workdir=None,av=None,survey=None):
     # adapted from surveys_db
@@ -200,51 +253,10 @@ def run_task( fieldobsid, task ):
     if task == 'calibrator':
         ## need to stage and download calibrators
         calibrator_directory = os.path.join(os.getenv('DATA_DIR'),fieldobsid,'calibrator')  ## doesn't actually exist for lotss-hr because we always just have calibrator solutions already
-        os.mkdirs( calibrator_directory )
+        os.makedirs( calibrator_directory )
 
         ## use obsid and flocs-lta to stage and download calibrators - Frits
-        ## run flocs-lta with outdir as calibrators_directory to put the calibrator data in, unpack and run dysco if necessary
-        stager = ObservationStager(get_surls=True)
-        stager.find_observation_by_sasid(
-            "ALL",
-            fieldobsid,
-            None,
-            120,
-            168,
-        )
-        stager.find_nearest_calibrators(2, 120, 168)
-        stage_id_calibrators = stager.stage_calibrators()
-        calibrator_staged = False
-        reference_date = datetime.now()
-        while True:
-            if len(get_surls_online(stage_id_calibrators)) == len(
-                get_surls_requested(stage_id_calibrators)
-            ):
-                calibrator_staged = True
-            else:
-                current_date = datetime.datetime.now()
-                time_passed = (current_date - reference_date).days()
-                if time_passed > 14:
-                    raise RuntimeError(f"Failed to fully stage observation after {time_passed} days. Probably best to restage and try again; aborting.")
-                sleep(60)
-            if calibrator_staged:
-                cmd = (
-                    f"flocs-lta download --outdir {calibrator_directory} {stage_id_calibrators}"
-                )
-                with open(
-                    f"log_download_calibrators_{fieldobsid}.txt",
-                    "w",
-                ) as f_out, open(
-                    f"log_download_calibrators_{fieldobsid}_err.txt",
-                    "w",
-                ) as f_err:
-                    proc = subprocess.run(
-                        cmd, shell=True, text=True, stdout=f_out, stderr=f_err
-                    )
-                    if not proc.returncode:
-                        break
-                    else:
-                        raise RuntimeError("Something went wrong downloading")
+        stage_and_download_calibrators(fieldobsid, calibrator_directory)
 
         calibrator_dirs = glob.glob( calibrator_directory + '/*' )
         cal_success = 0
