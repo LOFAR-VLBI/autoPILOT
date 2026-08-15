@@ -10,6 +10,7 @@ import os
 import threading
 import glob
 import requests
+import subprocess
 import stager_access
 from rclone import RClone   ## DO NOT pip3 install --user python-rclone -- use https://raw.githubusercontent.com/mhardcastle/ddf-pipeline/master/utils/rclone.py
 from download_file import download_file ## in ddf-pipeline/utils
@@ -20,6 +21,65 @@ from tasklist import set_task_list
 from calibrator_utils import get_linc, download_ddfpipeline_solutions, download_field_calibrators, unpack_calibrator_sols, compare_solutions
 import numpy as np
 
+from flocs_lta.lta_search import ObservationStager
+from stager_access import get_surls_requested, get_surls_online
+
+def stage_and_download_calibrators(fieldobsid: str, calibrator_directory: str):
+    """ Stages and downloads the flux density calibrators that bookend the given observation
+    using flocs-lta.
+
+    Args:
+        fieldobsid (str): the SAS ID belonging to the target scan (can be either Observation or AveragingPipeline).
+        calibrator_directory (str): output directory where data products will be downloaded to.
+
+    Raises:
+        TimeoutError: when the attempt takes more than 14 days.
+        RuntimeError: when the flocs-lta call fails (failure in downloading or extracting).
+        ValueError: when the fieldobsid is not all digits.
+    """
+    if not fieldobsid.isdigit():
+        raise ValueError(f"{fieldobsid=} does not follow LOFAR pattern of all digits.")
+    stager = ObservationStager(get_surls=True)
+    stager.find_observation_by_sasid(
+        "ALL",
+        fieldobsid,
+        None,
+        120,
+        168,
+    )
+    stager.find_nearest_calibrators(2, 120, 168)
+    stage_id_calibrators = stager.stage_calibrators()
+    calibrator_staged = False
+    reference_date = datetime.now()
+    while True:
+        if len(get_surls_online(stage_id_calibrators)) == len(
+            get_surls_requested(stage_id_calibrators)
+        ):
+            calibrator_staged = True
+        else:
+            current_date = datetime.datetime.now()
+            time_passed = (current_date - reference_date).days()
+            if time_passed > 14:
+                raise TimeoutError(
+                    f"Failed to fully stage observation after {time_passed} days. Probably best to restage and try again; aborting."
+                )
+            sleep(60)
+        if calibrator_staged:
+            cmd = f"flocs-lta download --outdir {calibrator_directory} {stage_id_calibrators}"
+            with open(
+                f"log_download_calibrators_{fieldobsid}.txt",
+                "w",
+            ) as f_out, open(
+                f"log_download_calibrators_{fieldobsid}_err.txt",
+                "w",
+            ) as f_err:
+                proc = subprocess.run(
+                    cmd, shell=True, text=True, stdout=f_out, stderr=f_err
+                )
+                if not proc.returncode:
+                    break
+                else:
+                    raise RuntimeError("Something went wrong downloading")
 
 def update_status(name,status,stage_id=None,time=None,workdir=None,av=None,survey=None):
     # adapted from surveys_db
@@ -185,8 +245,8 @@ def run_task( fieldobsid, task ):
     else:
         rundir = os.path.join(os.getenv('DATA_DIR'),'processing',fieldobsid,'rundir')
     outdir = os.path.join(os.getenv('DATA_DIR'),'processing',fieldobsid)
-    os.makedirs(rundir)
-    os.makedirs(outdir)
+    os.makedirs(rundir, exist_ok=True)
+    os.makedirs(outdir, exist_ok=True)
 
     fielddir = os.path.join(os.getenv('DATA_DIR'),fieldobsid)
 
@@ -194,11 +254,11 @@ def run_task( fieldobsid, task ):
     ## Frits to look at this and check that this is sensible (as well as stuff below)
 
     if task == 'calibrator':
-        ## need to stage and download calibrators
-        calibrator_directory = os.path.join(os.getenv('DATA_DIR'),fieldobsid,'calibrator')  ## doesn't actually exist for lotss-hr because we always just have calibrator solutions already
-        os.mkdirs( calibrator_directory )
+        # Doesn't actually exist for lotss-hr because we always just have calibrator solutions already
+        calibrator_directory = os.path.join(os.getenv('DATA_DIR'),fieldobsid,'calibrator')
+        os.makedirs(calibrator_directory, exist_ok=True)
 
-        ## use obsid and flocs-lta to stage and download calibrators - Frits
+        stage_and_download_calibrators(fieldobsid, calibrator_directory)
 
         calibrator_dirs = glob.glob( calibrator_directory + '/*' )
         cal_success = 0
