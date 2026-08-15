@@ -35,7 +35,10 @@ def stage_and_download_calibrators(fieldobsid: str, calibrator_directory: str):
     Raises:
         TimeoutError: when the attempt takes more than 14 days.
         RuntimeError: when the flocs-lta call fails (failure in downloading or extracting).
+        ValueError: when the fieldobsid is not all digits.
     """
+    if not fieldobsid.isdigit():
+        raise ValueError(f"{fieldobsid=} does not follow LOFAR pattern of all digits.")
     stager = ObservationStager(get_surls=True)
     stager.find_observation_by_sasid(
         "ALL",
@@ -242,8 +245,8 @@ def run_task( fieldobsid, task ):
     else:
         rundir = os.path.join(os.getenv('DATA_DIR'),'processing',fieldobsid,'rundir')
     outdir = os.path.join(os.getenv('DATA_DIR'),'processing',fieldobsid)
-    os.makedirs(rundir)
-    os.makedirs(outdir)
+    os.makedirs(rundir, exist_ok=True)
+    os.makedirs(outdir, exist_ok=True)
 
     fielddir = os.path.join(os.getenv('DATA_DIR'),fieldobsid)
 
@@ -255,7 +258,6 @@ def run_task( fieldobsid, task ):
         calibrator_directory = os.path.join(os.getenv('DATA_DIR'),fieldobsid,'calibrator')
         os.makedirs(calibrator_directory, exist_ok=True)
 
-        ## use obsid and flocs-lta to stage and download calibrators - Frits
         stage_and_download_calibrators(fieldobsid, calibrator_directory)
 
         calibrator_dirs = glob.glob( calibrator_directory + '/*' )
