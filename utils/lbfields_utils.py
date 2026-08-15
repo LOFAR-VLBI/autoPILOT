@@ -101,7 +101,7 @@ def update_status(name,status,stage_id=None,time=None,workdir=None,av=None,surve
 ## job management
 
 def run_apptainer( command ):
-    singularity = os.getenv('LOFAR_SNGULARITY')
+    singularity = os.getenv('LOFAR_SINGULARITY')
     bindpaths = ','.join([os.getenv('SOFTWAREDIR'),os.getenv('DATA_DIR')])
     os.system( 'apptainer exec -B {:s} --no-home {:s} {:s}'.format( bindpaths, singularity, command ) )
 
