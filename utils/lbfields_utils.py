@@ -103,7 +103,8 @@ def update_status(name,status,stage_id=None,time=None,workdir=None,av=None,surve
 def run_apptainer( command ):
     singularity = os.getenv('LOFAR_SINGULARITY')
     bindpaths = ','.join([os.getenv('SOFTWAREDIR'),os.getenv('DATA_DIR')])
-    os.system( 'apptainer exec -B {:s} --no-home {:s} {:s}'.format( bindpaths, singularity, command ) )
+    exit_code = os.system( 'apptainer exec -B {:s} --no-home {:s} {:s}'.format( bindpaths, singularity, command ) )
+    return exit_code
 
 def restart_toil_job( field, obsid, workflow ):
     softwaredir = os.getenv('SOFTWAREDIR')
@@ -622,19 +623,17 @@ def get_linc_inputs( field, obsid ):
     datadir = os.path.join( os.getenv('DATA_DIR'), field, obsid )
     softwaredir = os.getenv('SOFTWAREDIR')
     mslist = glob.glob( os.path.join( datadir, '*.MS' ) )
-    singularity_img = os.getenv('LOFAR_SINGULARITY')
     ## download TGSS skymodel
     skymodel = os.path.join( datadir, 'target.skymodel' )
-    cmd = "apptainer exec -B {:s},{:s} --no-home {:s} python3 {:s}/LINC/scripts/download_skymodel_target.py --targetname={:s} {:s} {:s}".format( os.getcwd(), softwaredir, singularity_img, softwaredir, field, mslist[0], skymodel )
-    if os.system(cmd):
+    cmd = "python3 {:s}/LINC/scripts/download_skymodel_target.py --targetname={:s} {:s} {:s}".format(softwaredir, field, mslist[0], skymodel )
+    if run_apptainer(cmd):
         update_status(field,"TGSS failed")
     #Download IONEX
-    ionexpath = datadir
     cal_solutions = os.path.join( datadir, 'LINC-cal_solutions.h5' )
-    cmd = "apptainer exec -B {:s},{:s} --no-home {:s} spinifex get_rm_h5parm_from_ms {:s} -o {:s} --solset-name target --soltab-name spinifex".format( os.getcwd(), softwaredir, singularity_img, mslist[0 ], cal_solutions)
-    cc = os.system(cmd)
+    cmd = "spinifex get_rm_h5parm_from_ms {:s} -o {:s} --solset-name target --soltab-name spinifex".format(mslist[0 ], cal_solutions)
+    cc = run_apptainer(cmd)
     if cc == 256:
-        os.system(cmd.replace('http://ftp.aiub.unibe.ch/CODE/','http://chapman.upc.es/'))
+        run_apptainer(cmd.replace('http://ftp.aiub.unibe.ch/CODE/','http://chapman.upc.es/'))
     #if os.system(cmd):
     #    update_status(field,"IONEX failed")
 
