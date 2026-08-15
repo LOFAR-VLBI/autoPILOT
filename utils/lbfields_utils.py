@@ -251,8 +251,8 @@ def run_task( fieldobsid, task ):
     ## Frits to look at this and check that this is sensible (as well as stuff below)
 
     if task == 'calibrator':
-        ## need to stage and download calibrators
-        calibrator_directory = os.path.join(os.getenv('DATA_DIR'),fieldobsid,'calibrator')  ## doesn't actually exist for lotss-hr because we always just have calibrator solutions already
+        # Doesn't actually exist for lotss-hr because we always just have calibrator solutions already
+        calibrator_directory = os.path.join(os.getenv('DATA_DIR'),fieldobsid,'calibrator')
         os.makedirs(calibrator_directory, exist_ok=True)
 
         ## use obsid and flocs-lta to stage and download calibrators - Frits
