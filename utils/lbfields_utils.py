@@ -7,10 +7,9 @@ import datetime
 from surveys_db import SurveysDB, tag_field, get_cluster
 
 import os
-import threading
+import sys
 import glob
 import requests
-import subprocess
 import stager_access
 from rclone import RClone   ## DO NOT pip3 install --user python-rclone -- use https://raw.githubusercontent.com/mhardcastle/ddf-pipeline/master/utils/rclone.py
 from download_file import download_file ## in ddf-pipeline/utils
@@ -21,65 +20,7 @@ from tasklist import set_task_list
 from calibrator_utils import get_linc, download_ddfpipeline_solutions, download_field_calibrators, unpack_calibrator_sols, compare_solutions
 import numpy as np
 
-from flocs_lta.lta_search import ObservationStager
-from stager_access import get_surls_requested, get_surls_online
-
-def stage_and_download_calibrators(fieldobsid: str, calibrator_directory: str):
-    """ Stages and downloads the flux density calibrators that bookend the given observation
-    using flocs-lta.
-
-    Args:
-        fieldobsid (str): the SAS ID belonging to the target scan (can be either Observation or AveragingPipeline).
-        calibrator_directory (str): output directory where data products will be downloaded to.
-
-    Raises:
-        TimeoutError: when the attempt takes more than 14 days.
-        RuntimeError: when the flocs-lta call fails (failure in downloading or extracting).
-        ValueError: when the fieldobsid is not all digits.
-    """
-    if not fieldobsid.isdigit():
-        raise ValueError(f"{fieldobsid=} does not follow LOFAR pattern of all digits.")
-    stager = ObservationStager(get_surls=True)
-    stager.find_observation_by_sasid(
-        "ALL",
-        fieldobsid,
-        None,
-        120,
-        168,
-    )
-    stager.find_nearest_calibrators(2, 120, 168)
-    stage_id_calibrators = stager.stage_calibrators()
-    calibrator_staged = False
-    reference_date = datetime.now()
-    while True:
-        if len(get_surls_online(stage_id_calibrators)) == len(
-            get_surls_requested(stage_id_calibrators)
-        ):
-            calibrator_staged = True
-        else:
-            current_date = datetime.datetime.now()
-            time_passed = (current_date - reference_date).days()
-            if time_passed > 14:
-                raise TimeoutError(
-                    f"Failed to fully stage observation after {time_passed} days. Probably best to restage and try again; aborting."
-                )
-            sleep(60)
-        if calibrator_staged:
-            cmd = f"flocs-lta download --outdir {calibrator_directory} {stage_id_calibrators}"
-            with open(
-                f"log_download_calibrators_{fieldobsid}.txt",
-                "w",
-            ) as f_out, open(
-                f"log_download_calibrators_{fieldobsid}_err.txt",
-                "w",
-            ) as f_err:
-                proc = subprocess.run(
-                    cmd, shell=True, text=True, stdout=f_out, stderr=f_err
-                )
-                if not proc.returncode:
-                    break
-                else:
-                    raise RuntimeError("Something went wrong downloading")
+from concurrent.futures import Future
 
 def update_status(name,status,stage_id=None,time=None,workdir=None,av=None,survey=None):
     # adapted from surveys_db
@@ -103,8 +44,7 @@ def update_status(name,status,stage_id=None,time=None,workdir=None,av=None,surve
 def run_apptainer( command ):
     singularity = os.getenv('LOFAR_SINGULARITY')
     bindpaths = ','.join([os.getenv('SOFTWAREDIR'),os.getenv('DATA_DIR')])
-    exit_code = os.system( 'apptainer exec -B {:s} --no-home {:s} {:s}'.format( bindpaths, singularity, command ) )
-    return exit_code
+    os.system(f"apptainer exec -B {bindpaths} --no-home {singularity} {command}")
 
 def restart_toil_job( field, obsid, workflow ):
     softwaredir = os.getenv('SOFTWAREDIR')
@@ -184,6 +124,10 @@ def collect_solutions_lhr( caldir ):
         tasklist.append('delay')
         tasklist.append('split-directions')
         tasklist.append('selfcal')
+        tasklist.append('recal')
+        tasklist.append('inspection')
+        tasklist.append('inspect')
+        tasklist.append('catalogue')
     else:
         solutions = unpack_calibrator_sols(caldir,result)
         if len(solutions) >= 1:
@@ -198,6 +142,10 @@ def collect_solutions_lhr( caldir ):
             tasklist.append('delay')
             tasklist.append('split-directions')
             tasklist.append('selfcal')
+            tasklist.append('recal')
+            tasklist.append('inspection')
+            tasklist.append('inspect')
+            tasklist.append('catalogue')
     if success:
         ## set the task list in the lb_operations table
         set_task_list(obsid,tasklist)
@@ -235,12 +183,17 @@ def get_calibrators( field ):
     command = 'flocs-run linc calibrator '+flocs_common_options+calibrator_options
 
 
-
-
-
 def run_task( fieldobsid, task ):
 
     field = fieldobsid.split('/')[0]
+    now = datetime.datetime.now()
+    time = now.strftime("%Y-%m-%d_%H-%M-%S")
+    logdir = os.path.join(os.getenv('DATA_DIR'),'logs',field)
+    if not os.path.exists(logdir):
+        os.makedirs(logdir)
+    logfile = os.path.join(logdir,f"{field}_{task}_{time}.log")
+    log_output = f" > {logfile} 2>&1"
+   
     if os.getenv("SCRATCH_DIR") is not None: #This should work, untested, fingers crossed
         rundir = os.path.join(os.getenv('SCRATCH_DIR'),fieldobsid,'rundir')
     else:
@@ -251,20 +204,21 @@ def run_task( fieldobsid, task ):
 
     fielddir = os.path.join(os.getenv('DATA_DIR'),fieldobsid)
 
-    flocs_common_options = "--record-toil-stats --scheduler slurm --slurm-queue {:s} --slurm-account {:s} --runner toil --rundir {:s} --outdir {:s} ".format(os.getenv('SLURM_QUEUES'),os.getenv('SLURM_ACCOUNT'), rundir,outdir)
+    # flocs_common_options = f"--record-toil-stats --scheduler slurm --slurm-queue {os.getenv('SLURM_QUEUES')} --slurm-account {os.getenv('SLURM_ACCOUNT')} --runner toil --rundir {rundir} --outdir {outdir} "
+    flocs_common_options = f"--scheduler slurm --slurm-queue {os.getenv('SLURM_QUEUES')} --slurm-account {os.getenv('SLURM_ACCOUNT')} --runner toil --rundir {rundir} --outdir {outdir} "
     ## Frits to look at this and check that this is sensible (as well as stuff below)
 
     if task == 'calibrator':
-        # Doesn't actually exist for lotss-hr because we always just have calibrator solutions already
-        calibrator_directory = os.path.join(os.getenv('DATA_DIR'),fieldobsid,'calibrator')
-        os.makedirs(calibrator_directory, exist_ok=True)
+        ## need to stage and download calibrators
+        calibrator_directory = os.path.join(os.getenv('DATA_DIR'),fieldobsid,'calibrator')  ## doesn't actually exist for lotss-hr because we always just have calibrator solutions already
+        os.mkdirs( calibrator_directory )
 
-        stage_and_download_calibrators(fieldobsid, calibrator_directory)
+        ## use obsid and flocs-lta to stage and download calibrators - Frits
 
         calibrator_dirs = glob.glob( calibrator_directory + '/*' )
         cal_success = 0
         for calibrator_dir in calibrator_dirs:
-            calibrator_options = '--slurm-time 24:00:00 --save-raw-solutions {:s}'.format(calibrator_directory)
+            calibrator_options = f"--slurm-time 24:00:00 --save-raw-solutions {calibrator_directory}"
             command = 'flocs-run linc calibrator '+flocs_common_options+calibrator_options
             ## run linc calibrator
             ## now tar the results
@@ -280,14 +234,14 @@ def run_task( fieldobsid, task ):
         ## get skymodel -- update to get LoTSS skymodel
         target_skymodel = os.path.join( fielddir, 'target.skymodel' )
         mslist = glob.glob( os.path.join( fielddir, '*.MS' ) )
-        ss = "python3 {:s}/autoPILOT/download_skymodel_target.py --Radius 5. --Source LOTSS --DoDownload True --targetname={:s} --fluxlimit 0.01 {:s} {:s}".format( softwaredir, field, mslist[0], target_skymodel )
+        ss = f"python3 {os.getenv('SOFTWAREDIR')}/autoPILOT/scripts/download_skymodel_target.py --Radius 5. --Source LOTSS --DoDownload True --targetname={field} --fluxlimit 0.01 {mslist[0]} {target_skymodel} > {logfile} 2>&1"
         run_apptainer( ss )
-        target_options = "--slurm-time 48:00:00 --output-fullres-data --min-unflagged-fraction 0.05 --offline-workers --target_skymodel {:s} --cal-solutions {:s} {:s}".format(cal_solutions,fielddir)
-        commmand = 'flocs-run linc target '+flocs_common_options+target_options
+        target_options = f"--slurm-time 48:00:00 --output-fullres-data --min-unflagged-fraction 0.05 --offline-workers --target_skymodel {target_skymodel} --cal-solutions {cal_solutions} {fielddir}"
+        command = 'flocs-run linc target '+flocs_common_options+target_options+log_output
     elif task == 'delay-calibration':
         datadir = os.path.join( fielddir, 'HBA_target_VLBI', 'results' )
-        delaycal_options = "--slurm-time 48:00:00 --delay-calibrator {:s} --ms-suffix dp3concat {:s}".format(delay_catalogue,datadir)
-        command = 'flocs-run vlbi delay-calibration '+flocs_common_options+delaycal_options
+        delaycal_options = f"--slurm-time 48:00:00 --delay-calibrator {delay_catalogue} --ms-suffix dp3concat {datadir}"
+        command = 'flocs-run vlbi delay-calibration '+flocs_common_options+delaycal_options+log_output
     elif task == 'delay':
         update_status('DelayCheck')
     elif task == 'split-directions':
@@ -297,40 +251,56 @@ def run_task( fieldobsid, task ):
         nchunks = chunk_imagecat( fieldobsid )
         commands = []
         for i in range(nchunks):
-            image_catalogue = os.path.join(os.getenv('DATA_DIR'),field,'image_catalogue_{:s}.csv'.format(str(i+1)))
-            split_options = "--slurm-time 48:00:00 --delay-solset {:s} --source-catalogue {:s} --no-do-selfcal --ms-suffix dp3concat {:s}".format(delaycal_solutions,image_catalogue,datadir)
-            command = 'flocs-run vlbi split-directions '+flocs_common_options+split_options
+            image_catalogue = os.path.join(os.getenv('DATA_DIR'),field,f"image_catalogue_{str(i+1)}.csv")
+            split_options = f"--slurm-time 48:00:00 --delay-solset {delaycal_solutions} --source-catalogue {image_catalogue} --no-do-selfcal --ms-suffix dp3concat {datadir}"
+            command = 'flocs-run vlbi split-directions '+flocs_common_options+split_options+log_output
             commands.append(command)
             ## sort out how to do multiprocessing
     elif task == 'selfcal':
         datadir = os.path.join( os.getenv('DATA_DIR'), fieldobsid, 'split-directions' )
         msfiles = glob.glob( os.path.join( datadir, 'ILTJ*' ) )
         with open( os.path.join( os.path.dirname(msfiles[0]), 'targetlist.txt' ), 'w' ) as f:
-            for msfile in msfiles:
-                f.write('{:s}\n'.format(msfile) )
-            with open('selfcal_{:s}.sh'.format(field),'w') as f:
-                f.write('#!/bin/bash -l\n\n')
-                f.write('#SBATCH --ntasks=1\n')
-                f.write('#SBATCH --cpus-per-task=32\n')
-                f.write('#SBATCH --job-name=selfcal\n')
-                f.write('#SBATCH -t 6:00:00\n\n')
-                f.write('DATADIR={:s}\n'.format(datadir))
-                f.write('OUTDIR={:s}/selfcal_${SLURM_ARRAY_TASK_ID}\n'.format(outdir))
-                f.write('TARGETINMS=`sed -n "${SLURM_ARRAY_TASK_ID}p" ${DATADIR}/targetlist.txt`\n')
-                f.write('mkdir -p ${OUTDIR}\n')
-                f.write('mv ${TARGETINMS ${OUTDIR}\n')
-                f.write('cd ${OUTDIR}\n')
-                f.write('TARGETMS=`ls -d ILTJ*`\n')
-                f.write("apptainer exec -B {:s},{:s} --no-home {:s} facetselfcal --configpath ${VLBIDIR}/target_selfcal_config.txt --targetcalILT=tec --ncpu-max-DP3solve=32 > facet_selfcal.log 2>&1") 
-            os.system('sbatch {:s} --array=1-{:s}%10 selfcal_{:s}.sh'.format(os.getenv('CLUSTER_OPTS'),str(len(msfiles))) )
-
+            selfcal_count = 0
+            with open( os.path.join( os.getenv('DATA_DIR'), field, 'recalibration_list.txt' ), 'r') as f2:
+                recal_list = f2.readlines[1:]
+                recal_targets = [line.split(',')[0] for line in recal_list]
+                for msfile in msfiles:
+                    if os.path.basename(msfile).split('_')[0] not in recal_targets:
+                        selfcal_count += 1
+                        f.write('{:s}\n'.format(msfile) )
+        with open('selfcal_{:s}.sh'.format(field),'w') as f:
+            f.write('#!/bin/bash -l\n\n')
+            f.write('#SBATCH --ntasks=1\n')
+            f.write('#SBATCH --cpus-per-task=16\n')
+            f.write('#SBATCH --job-name=selfcal\n')
+            f.write('#SBATCH -t 6:00:00\n\n')
+            f.write('DATADIR={:s}\n'.format(datadir))
+            f.write('OUTDIR={:s}/selfcal_${SLURM_ARRAY_TASK_ID}\n'.format(outdir))
+            f.write('TARGETINMS=`sed -n "${SLURM_ARRAY_TASK_ID}p" ${DATADIR}/targetlist.txt`\n')
+            f.write('mkdir -p ${OUTDIR}\n')
+            f.write('mv ${TARGETINMS ${OUTDIR}\n')
+            f.write('cd ${OUTDIR}\n')
+            f.write('TARGETMS=`ls -d ILTJ*`\n')
+            f.write("apptainer exec -B {:s},{:s} --no-home {:s} facetselfcal --configpath ${VLBIDIR}/target_selfcal_config.txt --targetcalILT=tec --ncpu-max-DP3solve=32 > facet_selfcal.log 2>&1")
+        logdir = os.path.join(os.getenv('DATA_DIR'),'logs',field)
+        if not os.path.exists(logdir):
+            os.makedirs(logdir)
+        os.system(f"sbatch {os.getenv('CLUSTER_OPTS')} --array=1-{str(selfcal_count)}%10 --output={os.getenv('DATA_DIR')}/logs/{field}/R-%x.%j.out selfcal_{field}.sh")
+    elif task == 'recal':
+        pass
+    elif task == 'inspection':
+        os.system('python3 {:s}/autoPILOT/scripts/lotsshr_inspection.py {:s}'.format(os.getenv('SOFTWAREDIR'), field))
+    elif task == 'inspect':
+        update_status('InspectCheck')
+    elif task == 'catalogue':
+        os.system('python3 {:s}/autoPILOT/scripts/lotsshr_catalog.py {:s}'.format(os.getenv('SOFTWAREDIR'), field))
 
     os.system(command)
-
+    os.system(f'echo "{logfile}" > {outdir}/finished_{task}.txt')
     
-        ## an example of the outdir, which here is J090630+693030
-        #(pyenv) [lofarvlbi-fsweijen@ui-01 J090630+693030]$ ls LINC_calibrator_L749280_2025_10_31-08_34_26/
-        #jobstore  logs_LINC_calibrator.tar  results_LINC_calibrator
+    ## an example of the outdir, which here is J090630+693030
+    #(pyenv) [lofarvlbi-fsweijen@ui-01 J090630+693030]$ ls LINC_calibrator_L749280_2025_10_31-08_34_26/
+    #jobstore  logs_LINC_calibrator.tar  results_LINC_calibrator
 
 
 def collect_solutions( caldir ):
@@ -435,7 +405,7 @@ def stage_field( name, survey=None ):
         caldirs.append(caldir)
         if not os.path.exists(caldir):
             os.makedirs(caldir)
-            ss = 'flocs-lta search-id --sasid {:s} --freq_end=168. --get-surls'.format(str(obsid))
+            ss = 'flocs-lta search-id --sasid {:s} --freq-start=120. --freq_end=168. --get-surls --n-calibrators 0'.format(str(obsid))
             os.system( ss )
             os.system('mv {:s} {:s}'.format(srmfile, csrmfile))
             os.system('rm 20*log')
@@ -565,7 +535,7 @@ def dysco_compress(caldir,msfile):
         f.write('msout.storagemanager=dysco\n')
         f.write('steps=[count]')
     sing_img = os.getenv('LOFAR_SINGULARITY')
-    os.system('singularity exec -B {:s} {:s} DP3 {:s}'.format(os.getcwd(),sing_img,os.path.join(caldir,'dysco_compress.parset')))
+    os.system('apptainer exec -B {:s} {:s} DP3 {:s}'.format(os.getcwd(),sing_img,os.path.join(caldir,'dysco_compress.parset')))
     if os.path.exists('{:s}.tmp'.format(msfile)):
         os.system('rm -r {:s}'.format(msfile))
         os.system('mv {:s}.tmp {:s}'.format(msfile,msfile))
@@ -578,7 +548,10 @@ def dysco_compress_job(caldir):
     success=True
     os.system('ls -d {:s}/*.MS > {:s}/myfiles.txt'.format(caldir,caldir))
     file_number = len(open("{:s}/myfiles.txt".format(caldir), "r").readlines())
-    command = 'sbatch -W --array=1-{:n}%5 {:s} {:s}/autoPILOT/slurm/dysco.sh {:s}'.format(file_number,os.getenv('CLUSTER_OPTS'),os.getenv('SOFTWAREDIR'),caldir)
+    logdir = os.path.join(os.getenv('DATA_DIR'),'logs',field)
+    if not os.path.exists(logdir):
+        os.makedirs(logdir)
+    command = f"sbatch -W --array=1-{file_number}%5 {os.getenv('CLUSTER_OPTS')} --output={os.getenv('DATA_DIR')}/logs/{field}/R-%x.%j.out {os.getenv('SOFTWAREDIR')}/autoPILOT/slurm/dysco.sh {caldir}"
     if os.system(command):
         print("Something went wrong with the dysco compression job!")
         success = False
@@ -603,8 +576,11 @@ def do_unpack(field):
                 f.write('#SBATCH -t 4:00:00\n\n')
                 f.write('OUTDIR={:s}\n'.format(os.path.dirname(trf)))
                 f.write('cd ${OUTDIR}\n')
-                f.write("apptainer exec -B {:s},{:s} --no-home {:s} python3 {:s}/autoPILOT/unpack_and_dysco_compress.py {:s}".format(os.getenv('SOFTWAREDIR'),os.getenv('DATA_DIR'),os.getenv('LOFAR_SINGULARITY'),os.getenv('SOFTWAREDIR'),trf))
-            os.system('sbatch {:s} -W unpack_{:s}.sh'.format(os.getenv('CLUSTER_OPTS'),field) )
+                f.write("apptainer exec -B {:s},{:s} --no-home {:s} python3 {:s}/autoPILOT/scripts/unpack_and_dysco_compress.py {:s}".format(os.getenv('SOFTWAREDIR'),os.getenv('DATA_DIR'),os.getenv('LOFAR_SINGULARITY'),os.getenv('SOFTWAREDIR'),trf))
+            logdir = os.path.join(os.getenv('DATA_DIR'),'logs',field)
+            if not os.path.exists(logdir):
+                os.makedirs(logdir)
+            os.system(f"sbatch {os.getenv('CLUSTER_OPTS')} --output={os.getenv('DATA_DIR')}/logs/{field}/R-%x.%j.out -W unpack_{field}.sh")
     ## check that everything unpacked
     success = 0    
     for obsdir in obsdirs:
@@ -623,17 +599,19 @@ def get_linc_inputs( field, obsid ):
     datadir = os.path.join( os.getenv('DATA_DIR'), field, obsid )
     softwaredir = os.getenv('SOFTWAREDIR')
     mslist = glob.glob( os.path.join( datadir, '*.MS' ) )
+    singularity_img = os.getenv('LOFAR_SINGULARITY')
     ## download TGSS skymodel
     skymodel = os.path.join( datadir, 'target.skymodel' )
-    cmd = "python3 {:s}/LINC/scripts/download_skymodel_target.py --targetname={:s} {:s} {:s}".format(softwaredir, field, mslist[0], skymodel )
-    if run_apptainer(cmd):
+    cmd = "apptainer exec -B {:s},{:s} --no-home {:s} python3 {:s}/LINC/scripts/download_skymodel_target.py --targetname={:s} {:s} {:s}".format( os.getcwd(), softwaredir, singularity_img, softwaredir, field, mslist[0], skymodel )
+    if os.system(cmd):
         update_status(field,"TGSS failed")
     #Download IONEX
+    ionexpath = datadir
     cal_solutions = os.path.join( datadir, 'LINC-cal_solutions.h5' )
-    cmd = "spinifex get_rm_h5parm_from_ms {:s} -o {:s} --solset-name target --soltab-name spinifex".format(mslist[0 ], cal_solutions)
-    cc = run_apptainer(cmd)
+    cmd = "apptainer exec -B {:s},{:s} --no-home {:s} spinifex get_rm_h5parm_from_ms {:s} -o {:s} --solset-name target --soltab-name spinifex".format( os.getcwd(), softwaredir, singularity_img, mslist[0 ], cal_solutions)
+    cc = os.system(cmd)
     if cc == 256:
-        run_apptainer(cmd.replace('http://ftp.aiub.unibe.ch/CODE/','http://chapman.upc.es/'))
+        os.system(cmd.replace('http://ftp.aiub.unibe.ch/CODE/','http://chapman.upc.es/'))
     #if os.system(cmd):
     #    update_status(field,"IONEX failed")
 
@@ -692,13 +670,17 @@ def check_field(field):
     for tmp_obsid in field_obsids:
         tmp_fieldobsid = '{:s}/{:s}'.format(field,tmp_obsid)
         ## check for presence of processing directories
-        tmp_outdir = glob.glob(os.path.join(os.getenv('DATA_DIR'),'processing','{:s}*'.format(tmp_fieldobsid)))
+        tmp_outdir = glob.glob(os.path.join(os.getenv('SCRATCH_DIR'),'{:s}*'.format(tmp_fieldobsid)))
         if len(tmp_outdir) > 0:
             ## check if directory is not empty
             contents = os.listdir(tmp_outdir[0])
             if len(contents) > 0:
                 obsid = tmp_obsid
-    fieldobsid = '{:s}/{:s}'.format(field,obsid)
+    try:
+        fieldobsid = '{:s}/{:s}'.format(field,obsid)
+    except UnboundLocalError:
+        obsid = tmp_obsid
+        fieldobsid = '{:s}/{:s}'.format(field,obsid)
     procdir = os.path.join(str(os.getenv('DATA_DIR')),'processing')
     outdirs = glob.glob(os.path.join(procdir,'{:s}*'.format(fieldobsid)))
     ## frits will change flocs-run to put log in output directory
@@ -874,3 +856,25 @@ def archive_lbfield( field, operation='mv' ):
         ## delete the tarfile
         os.system( 'rm {:s}*.tgz'.format(field))
 
+def get_thread_status(futures: dict[str, Future]) -> dict[str, dict[str, int]]:
+    """Get thread information per processing stage.
+
+    The output states per stage how many threads are running or are finished.
+    """
+    result: dict[str, dict[str, int]] = {}
+    for stack in futures.keys():
+        result[stack] = {
+            "running": len([
+                x for x in futures[stack] if x._state.lower() == "running"
+            ]),
+            "finished": len([
+                x for x in futures[stack] if x._state.lower() == "finished"
+            ])
+        }
+    return result
+
+def print_thread_status(statuses: dict[str, int]) -> None:
+    for stack in statuses.keys():
+        print(f"{stack}:")
+        for status in statuses[stack]:
+            print("\t", status, statuses[stack][status])
