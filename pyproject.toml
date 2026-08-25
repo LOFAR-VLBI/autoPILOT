@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autoPILOT"
+version = "0.0.0"
+description = ""
+requires-python = ">=3.10"
+
+[project.scripts]
+monitor_lbcals = "autoPILOT:monitor_lbcals.py"
+monitor_lbfields = "autoPILOT:monitor_lbfields.py"
+monitor_lotsshr = "autoPILOT:monitor_lotsshr.py"
+monitor_ilotss = "autoPILOT:monitor_ilotss.py"
