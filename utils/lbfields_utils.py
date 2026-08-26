@@ -240,8 +240,9 @@ def run_task( fieldobsid, task ):
         command = 'flocs-run linc target '+flocs_common_options+target_options+log_output
     elif task == 'delay-calibration':
         datadir = os.path.join( fielddir, 'HBA_target_VLBI', 'results' )
-        delaycal_options = f"--slurm-time 48:00:00 --delay-calibrator {delay_catalogue} --ms-suffix dp3concat {datadir}"
         delay_catalogue = os.path.join(os.getenv('DATA_DIR'), field, 'delay_calibrators.csv')
+        image_catalogue = os.path.join(os.getenv('DATA_DIR'), field, 'image_catalogue.csv')
+        delaycal_options = f"--slurm-time 48:00:00 --delay-calibrator {delay_catalogue} --image-catalogue {image_catalogue} --ms-suffix dp3concat {datadir}"
         command = 'flocs-run vlbi delay-calibration '+flocs_common_options+delaycal_options+log_output
     elif task == 'delay':
         update_status('DelayCheck')
