@@ -241,6 +241,7 @@ def run_task( fieldobsid, task ):
     elif task == 'delay-calibration':
         datadir = os.path.join( fielddir, 'HBA_target_VLBI', 'results' )
         delaycal_options = f"--slurm-time 48:00:00 --delay-calibrator {delay_catalogue} --ms-suffix dp3concat {datadir}"
+        delay_catalogue = os.path.join(os.getenv('DATA_DIR'), field, 'delay_calibrators.csv')
         command = 'flocs-run vlbi delay-calibration '+flocs_common_options+delaycal_options+log_output
     elif task == 'delay':
         update_status('DelayCheck')
@@ -652,49 +653,48 @@ def chunk_imagecat( fieldobsid, numdirs=10, catname='image_catalogue.csv', nchun
 ## verifying
 
 def get_workflow_obsid(outdir):
-    ## get the workflow that was run
-    with open(os.path.join(outdir,'job_output.txt'),'r') as f:
-        for line in f:
-            if 'Resolved' in line:
-                break
-            elif 'Workflow' in line:
-                if '.cwl' in line:
-                    break
-    tmp = line.split('.cwl')
-    workflow = os.path.basename(tmp[0])
-    obsid = os.path.basename(outdir).split("_")[0]
+    # Get the workflow that was run
+    finished = glob.glob(os.path.join(outdir,"finished_*.txt"))[0]
+    workflow = os.path.basename(finished).lstrip('finished_').rstrip('.txt')
+    obsid = os.path.basename(outdir).split('_')[0]
     return(workflow,obsid)
 
 def check_field(field):
     field_obsids = get_local_obsid(field)
     for tmp_obsid in field_obsids:
-        tmp_fieldobsid = '{:s}/{:s}'.format(field,tmp_obsid)
+        tmp_fieldobsid = f"{field}/{tmp_obsid}"
         ## check for presence of processing directories
-        tmp_outdir = glob.glob(os.path.join(os.getenv('SCRATCH_DIR'),'{:s}*'.format(tmp_fieldobsid)))
+        tmp_outdir = glob.glob(os.path.join(os.getenv('SCRATCH_DIR'),f"{tmp_fieldobsid}*"))
         if len(tmp_outdir) > 0:
             ## check if directory is not empty
             contents = os.listdir(tmp_outdir[0])
             if len(contents) > 0:
                 obsid = tmp_obsid
     try:
-        fieldobsid = '{:s}/{:s}'.format(field,obsid)
+        fieldobsid = f"{field}/{obsid}"
     except UnboundLocalError:
         obsid = tmp_obsid
-        fieldobsid = '{:s}/{:s}'.format(field,obsid)
+        fieldobsid = f"{field}/{obsid}"
     procdir = os.path.join(str(os.getenv('DATA_DIR')),'processing')
-    outdirs = glob.glob(os.path.join(procdir,'{:s}*'.format(fieldobsid)))
+    outdirs = glob.glob(os.path.join(procdir,f"{fieldobsid}*"))
     ## frits will change flocs-run to put log in output directory
-    finished = glob.glob(os.path.join(procdir,'{:s}*'.format(fieldobsid),'log*.txt') )
+    finished = glob.glob(os.path.join(procdir,f"{fieldobsid}*","finished_*.txt"))
     success = []
     if len(outdirs) == len(finished) and len(finished) > 0:
         for outdir in outdirs:
-            with open(os.path.join(outdir,'finished.txt'),'r') as f:
-                lines = f.readlines()
-            ## need to update based on flocs output
-            if 'SUCCESS: Pipeline finished successfully' in lines[0]:
-                success.append(1)
-            else:
-                success.append(0)
+            with open(glob.glob(os.path.join(outdir,'finished_*.txt'))[0],'r') as f:
+                logfile_path = f.readlines()[0].rstrip('\n')
+            
+            with open(logfile_path, 'r') as f:
+                lines = f.readlines()[-20:]
+                
+            for line in lines:
+                if "Success:" in line:
+                    if "Success: True" in line:
+                        success.append(1)
+                    else:
+                        success.append(0)
+                        
         if sum(success) == len(outdirs):
             ## everything finished successfully
             success = 'Finished'
@@ -712,37 +712,45 @@ def check_field(field):
         workflow, obsid = None, None
     return success, workflow, obsid
 
-def cleanup_step(field, fieldobsid):
+def cleanup_step(field, obsid):
     basedir = os.getenv('DATA_DIR')
-    procdir = os.path.join(str(os.getenv('DATA_DIR')),'processing')
-    field_procdirs = glob.glob( os.path.join(procdir,field, fieldobsid+'*') )
+    procdir = os.path.join(basedir,'processing')
+    field_procdirs = glob.glob( os.path.join(procdir,field,obsid+'*') )
     workflow, tmpid = get_workflow_obsid(field_procdirs[0])
-    field_datadir = os.path.join(basedir,field,fieldobsid)
+    field_datadir = os.path.join(basedir,field,obsid)
     workflowdir = os.path.join(field_datadir,workflow)
     os.makedirs(workflowdir,exist_ok=True)
     ## clean the scratch directory if it's different than procdir
     if os.getenv('SCRATCH_DIR') != procdir:
-        os.system('rm -rf {:s}/*'.format(os.path.join(os.getenv('SCRATCH_DIR'),fieldobsid)) )
+        os.system(f"rm -rf {os.path.join(os.getenv('SCRATCH_DIR'),field,obsid)}/*")
     for field_procdir in field_procdirs:
+        os.system(f"rm -rf {os.path.join(field_procdir,'finished*')}")
+        procdir_files = os.listdir(field_procdir)
+        if len(procdir_files) == 1:
+            out_folder = procdir_files[0]
+        else:
+            out_folder = ""
         ## remove logs directory (run was successful)
-        os.system('rm -rf {:s}'.format(os.path.join(field_procdir,'logs')))
+        os.system(f"rm -rf {os.path.join(field_procdir,out_folder,'logs*.tar')}")
         ## same for tmp directory
-        os.system('rm -rf {:s}'.format(os.path.join(field_procdir,'tmp*')))
+        os.system(f"rm -rf {os.path.join(field_procdir,out_folder,'tmp*')}")
         ## and workdir
-        os.system('rm -rf {:s}'.format(os.path.join(field_procdir,'workdir')))
+        os.system(f"rm -rf {os.path.join(field_procdir,out_folder,'coordination')}")
+        # os.system('rm -rf {:s}'.format(os.path.join(field_procdir,'workdir')))
         ## move everything else to the data directory and rename MSs
-        remaining_files = glob.glob(os.path.join(field_procdir,'*'))
+        remaining_files = glob.glob(os.path.join(field_procdir,out_folder,'*'))
         for ff in remaining_files:           
             dest = os.path.join(workflowdir,os.path.basename(ff).replace('out_',''))
             os.system('mv {:s} {:s}'.format(ff,dest))
         ## remove data from previous step if required
         if workflow in ['setup','delay-calibration','target_VLBI']:
-            os.system('rm -r {:s}'.format(os.path.join(field_datadir, '*.MS')))
+            os.system(f"rm -r {os.path.join(field_datadir, 'L*.MS')}")
         if workflow in ['HBA_target','target_VLBI']:
-            os.system('cp {:s} {:s}'.format(os.path.join(workflowdir,'LINC-cal_solutions.h5'),os.path.join(field_datadir,'LINC-target_solutions.h5')))
+            os.system('cp {:s} {:s}'.format(os.path.join(workflowdir,'results_LINC_target','LINC-cal_solutions_spinifex.h5'),os.path.join(field_datadir,'LINC-target_solutions.h5')))
             ## a results sub-directory in the results directory in 
         if workflow in ['concatenate-flag']:
             os.system('rm -r {:s}'.format(os.path.join(field_datadir,'setup/L*MS')))
+        os.system(f"rmdir {os.path.join(field_procdir, out_folder)}")
         os.system('rmdir {:s}'.format(field_procdir) )
 
 def upload_to_spider( tarfiles, spider_location='disk/surveys/' ):
