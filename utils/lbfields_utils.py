@@ -656,7 +656,7 @@ def chunk_imagecat( fieldobsid, numdirs=10, catname='image_catalogue.csv', nchun
 def get_workflow_obsid(outdir):
     # Get the workflow that was run
     finished = glob.glob(os.path.join(outdir,"finished_*.txt"))[0]
-    workflow = os.path.basename(finished).lstrip('finished_').rstrip('.txt')
+    workflow = os.path.basename(finished).replace('finished_','').replace('.txt','')
     obsid = os.path.basename(outdir).split('_')[0]
     return(workflow,obsid)
 
