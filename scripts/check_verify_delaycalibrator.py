@@ -80,16 +80,16 @@ def main( obsid='', solutions='' ):
                                 defaultdir = os.path.join(phaseupconcatpath,'pipelinesols') 
                                 os.makedirs(defaultdir, exist_ok=True)
                                 for oldf in oldfiles:
-                                    os.system('mv {:s} {:s}'.format(oldf, os.path.join(defaultdir,os.path.basename(oldf)) ) )
+                                    os.system('mv {:s} {:s}'.format(oldf, defaultdir) )
                                 ## move the new solution directory back
                                 os.system( 'mv {:s}/* {:s}'.format(tmpdir,solutionspath) )
                                 os.system( 'rmdir {:s}'.format(tmpdir))
                                 ## now copy the new solutions
                                 os.system('cp {:s} {:s}'.format(solutions, os.path.join(phaseupconcatpath, os.path.basename(solutions).replace('.h5','_verified.h5') ) ) )
                                 ## also want to move plots etc, assume in os.path.dirname(solutions)
-                                newfiles = glob.glob(os.path.join(solutionspath,'plotlosoto*/*'))
+                                newfiles = glob.glob(os.path.join(os.path.dirname(solutionspath),'solution_plots*/*'))
                                 if len(newfiles) == 0:
-                                    newfiles = glob.glob(os.path.join(solutionspath,'*009*png'))
+                                    newfiles = glob.glob(os.path.join(solutionspath,'*png'))
                                 verifieddir = os.path.join(phaseupconcatpath,'verified_solution_plots')
                                 os.makedirs(verifieddir, exist_ok=True)
                                 for newf in newfiles:
