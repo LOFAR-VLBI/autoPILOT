@@ -8,6 +8,7 @@ export DATA_DIR=/home/azimuth/surveys/
 export SCRATCH_DIR=/home/azimuth/surveys/
 export LOFAR_SINGULARITY=/home/azimuth/software/singularity/pull/vlbi-cwl_latest.sif
 export SOFTWAREDIR=/cosma/home/durham/dc-mora2/Software
+export NN_CACHE=/path/to/nn_cache  #obtain using `download_NN --cache_directory /path/to/nn_cache`
 
 ## cluster options
 export CLUSTER_OPTS="-A do011 -p cosma8-ska --output=${DATA_DIR}/logs/R-%x.%j.out" 
