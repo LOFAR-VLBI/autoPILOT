@@ -23,9 +23,8 @@ autoPILOT/ilotss/
     monitor-ilotss.py              # legacy orchestration
 ```
 
-The checkout scripts `monitor-ilotss.py` and `autoPILOT/monitor-ilotss.py` run
-the legacy monitor with execution directories at the repository root. The
-installed `monitor_ilotss` command uses the current working directory.
+The installed `monitor_ilotss` command runs the legacy script in `ilotss/OLD/`
+and creates run directories in the current working directory.
 The archiver is a standalone utility and awaits integration into orchestration.
 `autoPILOT/utils/calibrator_utils.py` serves the other legacy monitors.
 
@@ -94,16 +93,6 @@ method after the archive check.
 This initial implementation covers calibrators. Target QA and final facet-data
 retention, tape staging, scheduling, retry policy and database integration remain
 separate work.
-
-### Utility checks
-
-```bash
-python -m unittest discover -s tests -v
-```
-
-Archive tests use temporary files and mocked transfers. If `rclone` is installed,
-an additional integration check transfers between two temporary local directories.
-No test uploads to an archive service.
 
 # Requirements
 

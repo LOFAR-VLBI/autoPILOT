@@ -1056,7 +1056,7 @@ slurm_account = SLURM_ACCOUNT
 slurm_queue = SLURM_QUEUE
 calib_jobids = {}  # calib_sas -> SLURM job id, or None for pre-existing runs
 
-basedir = str(globals().get('_RUN_ROOT', os.getcwd()))
+basedir = os.getcwd()
 execdir = f'{basedir}/ILoTSS-run-L{targid}'
 os.makedirs(execdir, exist_ok=True)
 logging.info('Moving to execution directory: %s', execdir)

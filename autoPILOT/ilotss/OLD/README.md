@@ -4,10 +4,8 @@
 and compatibility while reusable functions are developed in the sibling
 `calibrator_utils` and `archiving_utils` packages.
 
-Both checkout launchers, `monitor-ilotss.py` and `autoPILOT/monitor-ilotss.py`,
-forward here and create `ILoTSS-run-L<target>` at the repository root. The
-installed `monitor_ilotss` command creates the directory in the working
-directory.
+The installed `monitor_ilotss` command runs this script and creates
+`ILoTSS-run-L<target>` in the current working directory.
 The assessment import and template location follow the new package layout;
 processing, upload and cleanup decisions retain the legacy behaviour.
 
