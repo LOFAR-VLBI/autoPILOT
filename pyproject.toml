@@ -12,4 +12,10 @@ requires-python = ">=3.11"
 monitor_lbcals = "autoPILOT:monitor_lbcals.py"
 monitor_lbfields = "autoPILOT:monitor_lbfields.py"
 monitor_lotsshr = "autoPILOT:monitor_lotsshr.py"
-monitor_ilotss = "autoPILOT:monitor_ilotss.py"
+monitor_ilotss = "autoPILOT.ilotss.OLD:main"
+
+[tool.setuptools.packages.find]
+include = ["autoPILOT", "autoPILOT.*"]
+
+[tool.setuptools.package-data]
+"autoPILOT.ilotss.calibrator_utils" = ["calibrator_medians_cache.h5"]
